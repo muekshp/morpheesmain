@@ -204,40 +204,70 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── 2. Load service account credentials ────────────────────────────────
-    const serviceAccountPath = path.join(process.cwd(), 'service-account.json');
-    let hasServiceAccount = fs.existsSync(serviceAccountPath);
+    // ── 2. Load service account credentials (file OR environment variable) ──
+    // On Vercel/serverless the filesystem is read-only, so we MUST support
+    // loading credentials directly from the environment variable without
+    // writing any file to disk.
+    let saContent: Record<string, any> | null = null;
 
-    if (!hasServiceAccount && (process.env.VERTEX_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT)) {
+    // Priority 1: local service-account.json file (works in dev)
+    const serviceAccountPath = path.join(process.cwd(), 'service-account.json');
+    if (fs.existsSync(serviceAccountPath)) {
       try {
-        const secretContent = process.env.VERTEX_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT || '';
-        fs.writeFileSync(serviceAccountPath, secretContent, 'utf8');
-        hasServiceAccount = fs.existsSync(serviceAccountPath);
+        saContent = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+        console.info('[Try-on API] Loaded credentials from service-account.json file.');
       } catch (e) {
-        console.warn('Failed to write service account from env secret', e);
+        console.warn('[Try-on API] Failed to parse service-account.json:', e);
       }
     }
 
-    if (!hasServiceAccount) {
+    // Priority 2: environment variable (works on Vercel / any serverless host)
+    if (!saContent) {
+      const envJson =
+        process.env.VERTEX_SERVICE_ACCOUNT_JSON ||
+        process.env.GOOGLE_SERVICE_ACCOUNT ||
+        '';
+      if (envJson) {
+        try {
+          saContent = JSON.parse(envJson);
+          console.info('[Try-on API] Loaded credentials from environment variable.');
+        } catch (e) {
+          console.error('[Try-on API] Failed to parse service account env var as JSON:', e);
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                'VERTEX_SERVICE_ACCOUNT_JSON environment variable contains invalid JSON. ' +
+                'Please paste the full service-account.json content as a single-line JSON string.',
+            },
+            { status: 500 }
+          );
+        }
+      }
+    }
+
+    if (!saContent) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Google Cloud service account (service-account.json) is not configured on the server.',
+          error:
+            'Google Cloud credentials are not configured. ' +
+            'Add VERTEX_SERVICE_ACCOUNT_JSON as an environment variable in your Vercel project settings.',
         },
         { status: 500 }
       );
     }
 
-    const saContent = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-    const projectId = saContent.project_id || 'apniapi';
+    // Fix escaped newlines in private_key (common when pasting JSON into env vars)
     if (saContent.private_key && typeof saContent.private_key === 'string') {
       saContent.private_key = saContent.private_key.replace(/\\n/g, '\n');
-      fs.writeFileSync(serviceAccountPath, JSON.stringify(saContent, null, 2), 'utf8');
     }
 
-    // ── 3. Get Google OAuth2 token ──────────────────────────────────────────
+    const projectId: string = saContent.project_id || 'apniapi';
+
+    // ── 3. Get Google OAuth2 token (using credentials object, no file needed) ──
     const auth = new GoogleAuth({
-      keyFile: serviceAccountPath,
+      credentials: saContent,           // ← direct object, no keyFile path
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
     const client = await auth.getClient();

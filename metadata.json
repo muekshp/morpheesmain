@@ -1,0 +1,6 @@
+{
+  "name": "MORPH AI - Multi-Agent Simulation Engine",
+  "description": "Transform business reports and real-world data into autonomous multi-agent simulations to explore scenarios, predict outcomes, and find optimal strategies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

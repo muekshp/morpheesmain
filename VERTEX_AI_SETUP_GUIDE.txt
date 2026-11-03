@@ -1,0 +1,190 @@
+﻿================================================================================
+   VERTEX AI / GOOGLE CLOUD SETUP GUIDE - MORPH AI PROJECT
+   Yeh file aapke liye complete reference hai taaki aage dobara koi dikkat na ho
+================================================================================
+
+PROJECT DETAILS:
+  - Project ID    : apniapi
+  - Project Number: 270493732713
+  - Service Account: vertex-tryon@apniapi.iam.gserviceaccount.com
+  - Region Used   : us-central1 (Vertex AI standard), global (Agent Platform)
+  - Model Target  : gemini-3.1-flash-image (Google Agent Platform)
+
+================================================================================
+  GALTIYAN JO IS BAAR HUI - AAGE IN SE BACHO
+================================================================================
+
+GALTI #1: Billing Account Link Nahi Tha
+-----------------------------------------
+  KYA HUA:
+    Vertex AI ke Imagen 3 model ko call kiya lekin Google Cloud project "apniapi"
+    par koi billing account linked nahi tha. Bina billing ke foundation models
+    (Imagen 3, Gemini Image) 404 NOT_FOUND error dete hain.
+
+  ERROR MESSAGE:
+    "Publisher model projects/apniapi/locations/us-central1/publishers/google/
+    models/imagen-3.0-generate-002 was not found or your project does not have
+    access to it."
+
+  FIX:
+    1. Google Cloud Console (https://console.cloud.google.com/) mein jao
+    2. Project "apniapi" select karo
+    3. Billing > Link a billing account karo
+    4. Verify: Console > Billing > Overview mein "Active" dikhna chahiye
+
+GALTI #2: Galat Model Name / Endpoint Use Kiya
+-------------------------------------------------
+  GALAT MODEL (Mat use karo):
+    imagen-3.0-generate-002
+    Endpoint: https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/
+              locations/us-central1/publishers/google/models/imagen-3.0-generate-002:predict
+
+  SAHI MODEL (Is project mein use ho raha hai):
+    gemini-3.1-flash-image
+    Endpoint: https://aiplatform.googleapis.com/v1/projects/PROJECT/
+              locations/global/publishers/google/models/gemini-3.1-flash-image:generateContent
+
+GALTI #3: API Enable Nahi Thi
+--------------------------------
+  YEH APIS ZAROOR ENABLE KARO:
+    - Vertex AI API                  (aiplatform.googleapis.com)
+    - Cloud AI Platform API          (ml.googleapis.com)
+    - Generative Language API        (generativelanguage.googleapis.com)
+
+  COMMAND:
+    gcloud services enable aiplatform.googleapis.com --project=apniapi
+    gcloud services enable ml.googleapis.com --project=apniapi
+
+GALTI #4: Service Account Ko Sahi Roles Nahi Di Thi
+------------------------------------------------------
+  SERVICE ACCOUNT: vertex-tryon@apniapi.iam.gserviceaccount.com
+
+  REQUIRED IAM ROLES:
+    - roles/aiplatform.user      (Vertex AI User)
+    - roles/ml.developer         (AI Platform Developer)
+
+  COMMAND:
+    gcloud projects add-iam-policy-binding apniapi ^
+      --member="serviceAccount:vertex-tryon@apniapi.iam.gserviceaccount.com" ^
+      --role="roles/aiplatform.user"
+
+    gcloud projects add-iam-policy-binding apniapi ^
+      --member="serviceAccount:vertex-tryon@apniapi.iam.gserviceaccount.com" ^
+      --role="roles/ml.developer"
+
+GALTI #5: Imagen 3 Ko Separately Request Nahi Ki Thi
+------------------------------------------------------
+  Imagen 3 model ke liye Vertex AI Model Garden mein separately access request
+  karni padti hai. Ye auto-enable nahi hoti.
+  URL: https://console.cloud.google.com/vertex-ai/model-garden?project=apniapi
+
+================================================================================
+  ABHI PROJECT MEIN KYA USE HO RAHA HAI (WORKING SETUP)
+================================================================================
+
+  MODEL   : gemini-3.1-flash-image
+  ENDPOINT: https://aiplatform.googleapis.com/v1/projects/apniapi/locations/
+            global/publishers/google/models/gemini-3.1-flash-image:generateContent
+
+  AUTH METHOD: Service Account JSON -> OAuth2 Access Token
+    File   : service-account.json (project root)
+    Library: google-auth-library (Node.js)
+    Scope  : https://www.googleapis.com/auth/cloud-platform
+
+  REQUEST:
+    POST <endpoint>
+    Authorization: Bearer <access_token>
+    Content-Type: application/json
+    Body:
+    {
+      "contents": [{ "role": "user", "parts": [
+        { "inlineData": { "mimeType": "image/jpeg", "data": "<base64>" } },
+        { "text": "Your prompt here..." }
+      ]}],
+      "generation_config": { "response_modalities": ["TEXT", "IMAGE"] }
+    }
+
+  RESPONSE: data.candidates[0].content.parts
+    agar part.inlineData.data hai -> generated image (base64)
+    Use: data:image/png;base64,<base64_data>
+
+================================================================================
+  CHECKLIST - DOBARA SETUP KARTE WAQT FOLLOW KARO
+================================================================================
+
+  [ ] 1. Billing Account linked hai (Console > Billing)
+  [ ] 2. Vertex AI API enable hai (aiplatform.googleapis.com)
+  [ ] 3. Cloud AI Platform API enable hai (ml.googleapis.com)
+  [ ] 4. Service account ko "Vertex AI User" role mila hai
+  [ ] 5. Service account ko "AI Platform Developer" role mila hai
+  [ ] 6. service-account.json file project root mein hai
+  [ ] 7. private_key mein actual newlines hain (not \\n)
+  [ ] 8. Sahi model: gemini-3.1-flash-image + global endpoint
+  [ ] 9. response_modalities: ["TEXT", "IMAGE"] set hai
+  [ ] 10. service-account.json .gitignore mein hai
+
+================================================================================
+  DIAGNOSTIC SCRIPT
+================================================================================
+
+  Yeh chalao (node scratch/test-vertex.cjs):
+
+    const { GoogleAuth } = require('google-auth-library');
+    const auth = new GoogleAuth({
+      keyFile: 'service-account.json',
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    async function test() {
+      const client = await auth.getClient();
+      const token = await client.getAccessToken();
+      console.log('Token OK:', token.token.substring(0, 20) + '...');
+      const res = await fetch(
+        'https://aiplatform.googleapis.com/v1/projects/apniapi/locations/global/' +
+        'publishers/google/models/gemini-3.1-flash-image:generateContent',
+        {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token.token,
+                     'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Say hello' }] }],
+            generation_config: { response_modalities: ['TEXT'] },
+          }),
+        }
+      );
+      const data = await res.json();
+      console.log('Status:', res.status);
+      console.log('Response:', JSON.stringify(data, null, 2).substring(0, 500));
+    }
+    test().catch(console.error);
+
+  Expected: HTTP 200 + "candidates" array
+  Agar 403  -> IAM roles check karo
+  Agar 404  -> API enable karo ya model name check karo
+  Agar 401  -> service-account.json corrupt hai
+
+================================================================================
+  USEFUL LINKS
+================================================================================
+
+  Google Cloud Console  : https://console.cloud.google.com/
+  IAM & Admin           : https://console.cloud.google.com/iam-admin/iam?project=apniapi
+  Billing               : https://console.cloud.google.com/billing?project=apniapi
+  APIs & Services       : https://console.cloud.google.com/apis/library?project=apniapi
+  Vertex AI Model Garden: https://console.cloud.google.com/vertex-ai/model-garden?project=apniapi
+  Service Accounts      : https://console.cloud.google.com/iam-admin/serviceaccounts?project=apniapi
+  Agent Platform Docs   : https://cloud.google.com/gemini-enterprise-agent-platform/docs
+
+================================================================================
+  SERVICE ACCOUNT FILE
+================================================================================
+
+  Path    : (project root)/service-account.json
+  Account : vertex-tryon@apniapi.iam.gserviceaccount.com
+  Project : apniapi
+
+  IMPORTANT: Yeh file kabhi bhi GitHub/public repo mein push mat karo!
+             .gitignore mein "service-account.json" ZAROOR add karo.
+
+================================================================================
+  Last Updated: October 2026 | Project: Morph AI - Multi Agent Simulation Engine
+================================================================================
